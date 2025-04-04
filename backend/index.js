@@ -1,6 +1,7 @@
 const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");  // Import CORS package
+const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
 const { EC2Client, DescribeRegionsCommand, DescribeInstancesCommand } = require("@aws-sdk/client-ec2");
 const { CostExplorerClient, GetCostAndUsageCommand } = require('@aws-sdk/client-cost-explorer');
 const Alertmodel = require('./database/alerts')
@@ -25,6 +26,14 @@ const ec2Client = new EC2Client({
     secretAccessKey: process.env.AWS_SECRET_KEY,
   },
 });
+
+const s3Client = new S3Client({
+   region: REGION,
+   credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY,
+    secretAccessKey: process.env.AWS_SECRET_KEY,
+   },
+   });
 
 // Function to get all AWS regions
 async function getAWSRegions() {
@@ -103,6 +112,41 @@ try {
 }
 }
 
+// API route to get S3 bucket data
+async function listAllObjects(bucketName) {
+  let contents = [];
+  let continuationToken = undefined;
+
+  try {
+    do {
+      const command = new ListObjectsV2Command({
+        Bucket: bucketName,
+        ContinuationToken: continuationToken,
+      });
+
+      const response = await s3Client.send(command);
+
+      if (response.Contents) {
+        contents.push(...response.Contents);
+      }
+
+      continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    return contents
+      .filter((obj) => obj.Key.endsWith(".tfstate") || obj.Key.endsWith(".tfvars"))
+      .map((obj) => ({
+        key: obj.Key.endsWith(".tfvars") ? obj.Key.replace(".tfvars", ".tfstate") : obj.Key,
+        bucket: bucketName,
+        size: obj.Size,
+        lastModified: obj.LastModified.toISOString(),
+      }));
+  } catch (err) {
+    console.error(`Error listing objects from ${bucketName}:`, err);
+    throw err;
+  }
+}
+
 // API route to get AWS cost data for the widget
 app.get("/aws-cost", async (req, res) => {
 try {
@@ -137,10 +181,40 @@ app.get("/instances", async (req, res) => {
 
 app.get("/alerts", async (req, res) => {
   try {
-    const alerts = await Alertmodel.find(); // Fetch all alerts from DB
-    res.status(200).json(alerts);
+    const bucketA = "sp-users-requests";     // Alerts bucket
+    const bucketB = "sp-terraform-state-file"; // State files bucket
+
+    const [filesA, filesB] = await Promise.all([
+      listAllObjects(bucketA),
+      listAllObjects(bucketB),
+    ]);
+
+    // Create sets for fast lookup
+    const keysA = new Set(filesA.map(f => f.key));
+    const keysB = new Set(filesB.map(f => f.key));
+
+    // Combine all keys
+    const allKeys = new Set([...keysA, ...keysB]);
+
+    const result = [];
+
+    for (const key of allKeys) {
+      const inA = keysA.has(key);
+      const inB = keysB.has(key);
+
+      result.push({
+        key,
+        active: inA && inB,
+        inBucketA: inA,
+        inBucketB: inB,
+        sourceBucket: inA ? bucketA : bucketB
+      });
+    }
+    console.log("Alerts:", result);
+    
+    res.status(200).json({ alerts: result });
   } catch (error) {
-    console.error("Error fetching alerts:", error);
+    console.error("Error comparing S3 buckets:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

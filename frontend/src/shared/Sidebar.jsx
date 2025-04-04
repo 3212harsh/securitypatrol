@@ -12,9 +12,9 @@ const menuItems = [
   { name: 'Dashboard', icon: dashboard, path: '/' },
   { name: 'Active Alerts', icon: active_alerts, path: '/active-alerts' },
   { name: 'New Alerts', icon: new_alerts, path: '/new-alerts' },
-  { name: 'Custom Alerts', icon: custom_alerts, path: '/custom-alerts' },
-  { name: 'Accounts', icon: accounts, path: '/accounts' },
-  { name: 'Settings', icon: settings, path: '/settings' },
+  // { name: 'Custom Alerts', icon: custom_alerts, path: '/custom-alerts' },
+  // { name: 'Accounts', icon: accounts, path: '/accounts' },
+  // { name: 'Settings', icon: settings, path: '/settings' },
 ];
 
 const Sidebar = () => {
